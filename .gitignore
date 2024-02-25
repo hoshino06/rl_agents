@@ -1,3 +1,7 @@
+logs/
+risk_quantification_dqn.py
+risk_quantification_dqn_pinn.py
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
