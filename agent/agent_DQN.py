@@ -44,7 +44,7 @@ def agentOptions(
 
 
 # Deep Q-Network Agent class
-class DQNAgent:
+class RLagent:
     def __init__(self, model, actNum, agentOp): 
 
         # Agent Options
@@ -104,14 +104,12 @@ class DQNAgent:
         minibatch = random.sample(self.replay_memory, self.agentOp['MINIBATCH_SIZE'])
 
         #######################
-        # Calculate traget y
-        PREDICTION_BATCH_SIZE = 1
-        
+        # Calculate traget y        
         current_states = np.array([transition[0] for transition in minibatch])        
-        current_qs_list = self.model.predict(current_states, PREDICTION_BATCH_SIZE, verbose=0)
+        current_qs_list = self.model(current_states)
 
         new_current_states = np.array([transition[3] for transition in minibatch])
-        future_qs_list = self.target_model.predict(new_current_states, PREDICTION_BATCH_SIZE, verbose=0)
+        future_qs_list = self.target_model(new_current_states)
         
         X = [] # feature set
         y = [] # label   set
@@ -123,7 +121,7 @@ class DQNAgent:
             else:
                 new_q = reward
 
-            current_qs = current_qs_list[index]
+            current_qs = np.array(current_qs_list[index])
             current_qs[action] = new_q
 
             X.append(current_state)
@@ -151,14 +149,32 @@ class DQNAgent:
                 self.epsilon = max( self.agentOp['EPSILON_MIN'], self.epsilon)
 
 
+    def load_weights(self, ckpt_dir, ckpt_idx=None):
+
+        checkpoint = tf.train.Checkpoint(model = self.model)
+        manager    = tf.train.CheckpointManager(checkpoint, 
+                                                directory=ckpt_dir, 
+                                                max_to_keep=1000)
+        if not ckpt_idx or ckpt_idx == 'latest': 
+            ckpt_path = manager.latest_checkpoint
+        else:
+            ckpt_path = manager.checkpoints[ckpt_idx]
+   
+        checkpoint.restore(ckpt_path)
+        
+        print(f'Agent loaded weights stored in {ckpt_path}')
+        
+        return ckpt_path    
+
+
 ###################################################################################
-# Learning Algorithm
+# Training procesure
 
 def trainOptions(
         EPISODES      = 50, 
         LOG_DIR       = None,
         SHOW_PROGRESS = True,
-        SAVE_AGENTS   = True,
+        SAVE_AGENTS   = False,
         SAVE_FREQ     = 1,
         ):
     
@@ -231,7 +247,7 @@ def train(agent, env, trainOp):
             with summary_writer.as_default():
                 tf.summary.scalar('Episode Reward', ep_reward, step=episode)                    
                 tf.summary.scalar('Episode Q0',     ep_q0,     step=episode)                    
-            if episode % trainOp['SAVE_FREQ'] == 0:
+            if trainOp['SAVE_AGENTS'] and episode % trainOp['SAVE_FREQ'] == 0:
                 manager.save(checkpoint_number=episode) 
 
     return 

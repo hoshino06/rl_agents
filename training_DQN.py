@@ -6,13 +6,14 @@ Created on Fri Feb 23 14:58:23 2024
 # general packages
 import numpy as np
 import random
+from datetime import datetime
 
-# tensorflow, keras
+# keras
 from keras.models import Sequential
 from keras.layers import Dense, Activation
 
 # DQN agent
-from agent_DQN import DQNAgent, agentOptions, train, trainOptions
+from agent.agent_DQN import RLagent, agentOptions, train, trainOptions
 
 ###################################################################################
 # Environment (exmaple in ACC2024 paper)
@@ -65,7 +66,13 @@ class PlanerEnv:
 
 ################################################################################################
 # Main
-def main(log_dir):
+###############################################################################
+if __name__ == '__main__':
+
+    # For more repetitive results
+    random.seed(1)
+    np.random.seed(1)
+
 
     ###########################
     # Environment
@@ -88,36 +95,21 @@ def main(log_dir):
         LEARN_RATE = 1e-3, 
         REPLAY_MEMORY_SIZE = 5000, 
         )
-    agent  = DQNAgent(model, actNum, agentOp)
+    agent  = RLagent(model, actNum, agentOp)
 
 
     ######################################
     # Training
+
+    #LOG_DIR = None
+    LOG_DIR = 'logs/test'+datetime.now().strftime('%m%d%H%M')
     
     trainOp = trainOptions(
         EPISODES = 50, 
         SHOW_PROGRESS = True, 
-        LOG_DIR     = log_dir,
+        LOG_DIR     = LOG_DIR,
         SAVE_AGENTS = True, 
         SAVE_FREQ   = 10,
         )
     train(agent, env, trainOp)
-
-    return agent
-
-
-###############################################################################
-if __name__ == '__main__':
-
-    # For more repetitive results
-    random.seed(1)
-    np.random.seed(1)
-
-    LOG_DIR = None
-    #log_dir = 'logs/test0225_01'
-    
-    main(LOG_DIR)
-    
-    
-    
     
