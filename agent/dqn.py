@@ -131,6 +131,7 @@ class PIRLagent:
 
         #######################
         # Calculate traget y
+        
         current_states = np.array([transition[0] for transition in minibatch], dtype=np.float32)        
         current_qs_list = self.model(torch.from_numpy(current_states)).detach().numpy()
 
@@ -152,125 +153,32 @@ class PIRLagent:
 
             X.append(current_state)
             y.append(current_qs)
-
+        
         X = np.array(X, dtype=np.float32)
         y = np.array(y, dtype=np.float32)
 
         #end_time = datetime.datetime.now()
         #elapsed_time = end_time - start_time
         #print("sample_DQN:", elapsed_time)
-        #start_time = datetime.datetime.now()        
-
-        ##########################
-        # Samples for PDE
-        X_PDE, X_BDini, X_BDlat = self.pinnOp['SAMPLING_FUN']()
-        #X_PDE = tf.Variable(X_PDE)        
-
-        # Convection and diffusion coefficient
-        with torch.no_grad():
-            Qsa = self.model(torch.tensor(X_PDE, dtype=torch.float))
-            Uidx_PDE   = Qsa.argmax(1).numpy().reshape(-1, 1)               
-        f =  np.apply_along_axis(self.pinnOp['CONVECTION_MODEL'], 1, 
-                                 np.concatenate([X_PDE, Uidx_PDE], axis=1) )
-        A =  np.apply_along_axis(self.pinnOp['DIFFUSION_MODEL'], 1, 
-                                 np.concatenate([X_PDE, Uidx_PDE], axis=1))
-
-        #end_time = datetime.datetime.now()
-        #elapsed_time = end_time - start_time
-        #print("sample_PDE:", elapsed_time)
-        #start_time = datetime.datetime.now()        
-
+        #start_time =
+      
         ####################
         # DQN Loss (lossD)
         ####################
+        
         y_pred = self.model(torch.from_numpy(X))
         y_trgt = torch.from_numpy(y)
         lossD  = torch.nn.functional.mse_loss( y_pred, y_trgt )
-    
-        ####################
-        # PDE loss (lossP)
-        ####################
-        #start_time_hess = datetime.datetime.now()        
-
-        if self.pinnOp['HESSIAN_CALC']: 
-
-            #from functorch import hessian
-            
-            X_PDE = torch.tensor(X_PDE, dtype=torch.float, requires_grad=True)
-            Qsa   = self.model(X_PDE)
-            V     = Qsa.max(1) 
-            dV_dx = torch.autograd.grad(V.values.sum(), X_PDE, create_graph=True)[0]
-            
-            # jacobian_rows = [torch.autograd.grad(dV_dx, X_PDE, vec)[0]
-            #          for vec in torch.eye(len(X_PDE[0]))]
-            # return torch.stack(jacobian_rows)
-                
-        else: 
-            
-            X_PDE = torch.tensor(X_PDE, dtype=torch.float, requires_grad=True)
-            Qsa   = self.model(X_PDE)
-            V     = Qsa.max(1) 
-            dV_dx = torch.autograd.grad(V.values.sum(), X_PDE, create_graph=True)[0]
-                        
-        #end_time_hess = datetime.datetime.now()
-        #elapsed_time = end_time_hess - start_time_hess
-
-        #print("calc_Hess:", elapsed_time)
-
-        '''
-        # check gradient implementation (for debug)
-        print('\n V=', V)
-        ##
-        V_dx = tf.reduce_max( self.model( X_PDE + [0.01, 0, 0]), axis=1)
-        dV_dx_man = ( V_dx - V ) / 0.01
-        print('dV_dx[:,0]=',  dV_dx[:,0])
-        print('dV_dx[:,0] ~ ', dV_dx_man)
-        ##
-        V_dx2 = tf.reduce_max( self.model( X_PDE - [0.01, 0, 0]), axis=1)
-        HessV0_man = ( V_dx - 2.0*V + V_dx2 ) / ( (0.01)**2 )
-        print(Hess[:,0])
-        print(HessV0_man)
-        '''                  
-
-        ## Convection term
-        conv_term = ( dV_dx * torch.tensor(f, dtype=torch.float32) ).sum(1)
-
-        if self.pinnOp['HESSIAN_CALC']:
-            # Diffusion term            
-            #diff_term = (1/2) * tf.linalg.trace( tf.matmul(A, HessV) )
-            #diff_term = tf.cast(diff_term, dtype=tf.float32)
-                          
-            # lossP
-            # lossP = tf.metrics.mean_squared_error(conv_term + diff_term, 
-            #                                       np.zeros_like(conv_term) )
-            lossP = torch.nn.functional.mse_loss( conv_term, 
-                                                  torch.zeros_like(conv_term) )             
-
-        else:
-            # lossP
-            lossP = torch.nn.functional.mse_loss( conv_term, 
-                                                  torch.zeros_like(conv_term) )             
         
-        ########################
-        # Boundary loss (lossB)
-        ########################
-        # termanal boundary (\tau = 0)
-        y_bd_ini = self.model(torch.tensor(X_BDini, dtype=torch.float32)).max(1).values
-        lossBini = torch.nn.functional.mse_loss( y_bd_ini, torch.ones_like(y_bd_ini) )
-        
-        # lateral boundary
-        y_bd_lat = self.model(torch.tensor(X_BDlat, dtype=torch.float32)).max(1).values
-        lossBlat = torch.nn.functional.mse_loss( y_bd_lat, torch.zeros_like(y_bd_lat) )
-        
-        lossB = lossBini + lossBlat
-
         #####################
         # Total Loss function
         #####################
-        Lambda = self.pinnOp['WEIGHT_PDE']
-        Mu     = self.pinnOp['WEIGHT_BOUNDARY']
-        loss = lossD + Lambda*lossP + Mu*lossB      
-
+       # Lambda = self.pinnOp['WEIGHT_PDE']
+        #Mu     = self.pinnOp['WEIGHT_BOUNDARY']
+    
+        #loss = lossD + Lambda*lossP + Mu*lossB      
+        loss = lossD
+        
         #end_time = datetime.datetime.now()
         #elapsed_time = end_time - start_time
         #print("loss:", elapsed_time)
