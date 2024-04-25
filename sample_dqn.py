@@ -1,3 +1,4 @@
+# %%
 """ Sample program of PIRL safety
         1. main_torch
         2. main_tensorflow
@@ -20,7 +21,7 @@ from rl_env.planer_env import PlanerEnv, convection_model, diffusion_model, samp
 
 def main_training():
 
-    from agent.dqn_torch import PIRLagent, agentOptions, train, trainOptions, pinnOptions
+    from agent.dqn import PIRLagent, agentOptions, train, trainOptions, pinnOptions
     from torch import nn
     from torch.optim import Adam
 
@@ -90,5 +91,5 @@ if __name__ == '__main__':
     random.seed(1)
     np.random.seed(1)
 
-    agent, rl_env = main_torch()
+    agent, rl_env = main_training()
     #agent, rl_env = main_tensorflow()
