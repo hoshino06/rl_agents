@@ -1,11 +1,9 @@
 """ DQN based PIRL implementation with pytorch
         1. agentOptions
-        2. criticOption
-        3. pinnOptions
-        4. PIRLagent
-        5. trainOptions
-        6.NoiseOptions
-        7.train
+        2. pinnOptions
+        3. PIRLagent
+        4. trainOptions
+        5.train
 """
 
 __author__ = 'Hikaru Hoshino'
@@ -31,12 +29,14 @@ def agentOptions(
         EPSILON_INIT        = 1,
         EPSILON_DECAY       = 0.998, 
         EPSILON_MIN         = 0.01,
-        RESTART_EP          = None, 
+        RESTART_EP          = None,
+        TAU                 = 0.2
         ):
     
     agentOp = {
         'DISCOUNT'          : DISCOUNT,
-        'OPTIMIZER'         : OPTIMIZER,
+        'ACTOR_OPTIMIZER'   : OPTIMIZER,
+        'CRITIC_OPTIMIZER'  : OPTIMIZER,
         'REPLAY_MEMORY_SIZE': REPLAY_MEMORY_SIZE,
         'REPLAY_MEMORY_MIN' : REPLAY_MEMORY_MIN,
         'MINIBATCH_SIZE'    : MINIBATCH_SIZE, 
@@ -44,36 +44,8 @@ def agentOptions(
         'EPSILON_INIT'      : EPSILON_INIT,
         'EPSILON_DECAY'     : EPSILON_DECAY, 
         'EPSILON_MIN'       : EPSILON_MIN,
-        'RESTART_EP'        : RESTART_EP
-        }
-    
-    return agentOp
-
-# Agent Options
-def agentOptions(
-        DISCOUNT            = 0.99, 
-        OPTIMIZER           = None,
-        REPLAY_MEMORY_SIZE  = 5_000,
-        REPLAY_MEMORY_MIN   = 100,
-        MINIBATCH_SIZE      = 16, 
-        UPDATE_TARGET_EVERY = 5, 
-        EPSILON_INIT        = 1,
-        EPSILON_DECAY       = 0.998, 
-        EPSILON_MIN         = 0.01,
-        RESTART_EP          = None, 
-        ):
-    
-    agentOp = {
-        'DISCOUNT'          : DISCOUNT,
-        'OPTIMIZER'         : OPTIMIZER,
-        'REPLAY_MEMORY_SIZE': REPLAY_MEMORY_SIZE,
-        'REPLAY_MEMORY_MIN' : REPLAY_MEMORY_MIN,
-        'MINIBATCH_SIZE'    : MINIBATCH_SIZE, 
-        'UPDATE_TARGET_EVERY':UPDATE_TARGET_EVERY, 
-        'EPSILON_INIT'      : EPSILON_INIT,
-        'EPSILON_DECAY'     : EPSILON_DECAY, 
-        'EPSILON_MIN'       : EPSILON_MIN,
-        'RESTART_EP'        : RESTART_EP
+        'RESTART_EP'        : RESTART_EP,
+        'TAU'               : TAU
         }
     
     return agentOp
@@ -83,8 +55,6 @@ def pinnOptions(
         CONVECTION_MODEL,
         DIFFUSION_MODEL,
         SAMPLING_FUN, 
-        WEIGHT_PDE      = 1e-3, 
-        WEIGHT_BOUNDARY = 1, 
         HESSIAN_CALC    = True,
         ):
 
@@ -92,51 +62,47 @@ def pinnOptions(
         'CONVECTION_MODEL': CONVECTION_MODEL,
         'DIFFUSION_MODEL' : DIFFUSION_MODEL, 
         'SAMPLING_FUN'    : SAMPLING_FUN,
-        'WEIGHT_PDE'      : WEIGHT_PDE,
-        'WEIGHT_BOUNDARY' : WEIGHT_BOUNDARY,
-        'HESSIAN_CALC'      : HESSIAN_CALC,
+        'HESSIAN_CALC'    : HESSIAN_CALC,
         }
 
     return pinnOp
 
-# Deep Q-Network Agent class
-class PIRLagent:
-    def __init__(self, model, actNum, agentOp, pinnOp): 
+
+# DDPG Agent class
+class DDPGagent:
+    def __init__(self, actor, critic, agentOp): 
 
         # Agent Options
-        self.actNum  = actNum
+        self.actNum  = 3
         self.agentOp = agentOp
-        self.pinnOp  = pinnOp
         
-        # Q-networks
-        self.model     = model
-        self.optimizer = agentOp['OPTIMIZER']
+        #actor-networks
+        self.actor     = actor
+        self.actor_optimizer = agentOp['ACTOR_OPTIMIZER']
+        
+        # critic-networks
+        self.critic     = critic
+        self.critic_optimizer  = agentOp['CRITIC_OPTIMIZER']
 
-        # Target Q-network 
-        self.target_model = copy.deepcopy(self.model)
-
+        # Target networks
+        self.target_actor = copy.deepcopy(self.actor)
+        self.target_critic = copy.deepcopy(self.critic)
+        
         # Replay Memory
         self.replay_memory = deque(maxlen=agentOp['REPLAY_MEMORY_SIZE'])
 
         # Initialization of variables
-        self.epsilon = agentOp['EPSILON_INIT'] if agentOp['RESTART_EP'] == None else max( self.agentOp['EPSILON_MIN'], agentOp['EPSILON_INIT']*np.power(agentOp['EPSILON_DECAY'], agentOp['RESTART_EP']))
+        # self.epsilon = agentOp['EPSILON_INIT'] if agentOp['RESTART_EP'] == None else max( self.agentOp['EPSILON_MIN'], agentOp['EPSILON_INIT']*np.power(agentOp['EPSILON_DECAY'], agentOp['RESTART_EP']))
         self.target_update_counter = 0
-                
         self.terminate            = False
         self.last_logged_episode  = 0
         self.training_initialized = False
-
+        
     def update_replay_memory(self, transition):
-        # transition = (current_state, action, reward, new_state, done)
         self.replay_memory.append(transition)
 
-    def get_qs(self, state):
-        state = torch.tensor(state, dtype=torch.float32)        
-        return self.model(state)
-    
     def get_epsilon_greedy_action(self, state):
-        
-        if np.random.random() > self.epsilon:
+        if np.random.random() > self.agentOp['EPSILON_INIT']:
             # Greedy action from Q network
             action_idx = int( torch.argmax(self.get_qs(state)) )
         else:
@@ -144,8 +110,27 @@ class PIRLagent:
             action_idx = np.random.randint(0, self.actNum)  
         return action_idx
 
-    def train_step(self, experience, is_episode_done):
+    def get_action(self, state):
+        state = torch.tensor(state, dtype=torch.float32)
+        return self.actor(state)
+    
+    def get_action_with_noise(self, state):
+        
+        action = self.get_action(state)
+        
+        Mean = 0
+        ActionSize = 1
+        Standarddeviation = 0.1;
+        w = Mean + np.random.randn(ActionSize)*Standarddeviation
+        
+        action_w_noise = action.detach().numpy() + w
+        return action_w_noise
+   
+    def get_qs(self, state):
+        state = torch.tensor(state, dtype=torch.float32)        
+        return self.critic(state)
 
+    def train_step(self, experience, is_episode_done):
         ########################
         # Update replay memory
         self.update_replay_memory(experience)
@@ -153,94 +138,74 @@ class PIRLagent:
         if len(self.replay_memory) < self.agentOp['REPLAY_MEMORY_MIN']:
             return
 
-        #print('--------------')
-        #start_time = datetime.datetime.now()        
-
-        ########################
+        #####################################
+        # Update critic
+        #####################################        
         # Sample minibatch from experience memory
         minibatch = random.sample(self.replay_memory, self.agentOp['MINIBATCH_SIZE'])
 
-        #######################
-        # Calculate traget y
+        X = [] #入力データのリスト
+        y = [] #ターゲットデータのリスト
         
-        current_states = np.array([transition[0] for transition in minibatch], dtype=np.float32)        
-        current_qs_list = self.model(torch.from_numpy(current_states)).detach().numpy()
-
-        new_current_states = np.array([transition[3] for transition in minibatch], dtype=np.float32)
-        future_qs_list = self.target_model(torch.from_numpy(new_current_states)).detach().numpy()
-        
-        X = [] # feature set
-        y = [] # label   set (target y)
-
-        for index, (current_state, action, reward, new_state, is_terminal) in enumerate(minibatch):
-            if not is_terminal:
-                max_future_q = future_qs_list[index].max()
-                new_q = reward + self.agentOp['DISCOUNT'] * max_future_q
+        # Calculate target values
+        for transition in minibatch:
+            current_state, action, reward, new_state, is_done = transition
+            
+            # ターゲットアクターとターゲットネットワークを使って次状態(new_state)の価値関数を推定
+            opt_action = self.target_actor(torch.tensor(new_state, dtype=torch.float32))
+            new_state  = torch.tensor(new_state, dtype=torch.float32)
+            combined_input = torch.cat([new_state,opt_action], dim=0)
+            future_qs = self.target_critic(combined_input)
+            
+            # 現状態(current_state)のクリティックの推定を計算
+            if is_done:
+                new_q = torch.tensor(reward, dtype=torch.float32) 
             else:
-                new_q = reward
-
-            current_qs = np.array(current_qs_list[index]) 
-            current_qs[action] = new_q           # update for target
-
+                new_q = torch.tensor(reward, dtype=torch.float32) + self.agentOp['DISCOUNT'] * future_qs
+            
             X.append(current_state)
-            y.append(current_qs)
+            y.append(new_q.detach().item())
+         
         
-        X = np.array(X, dtype=np.float32)
-        y = np.array(y, dtype=np.float32)
+        X = np.array(X,dtype = np.float32)
+        y = np.array(y,dtype = np.float32)
+                 
+        # Critic Loss function
+        actions = np.array([transition[1] for transition in minibatch], dtype=np.float32)
+        X_and_U = np.concatenate((X, actions.reshape(-1,1)), axis=1)
+        y_pred  = self.critic( torch.from_numpy(X_and_U) )
+        y_trgt  = torch.from_numpy(y).unsqueeze(1)
+        loss_critic = torch.nn.functional.mse_loss(y_pred, y_trgt)          
 
-        #end_time = datetime.datetime.now()
-        #elapsed_time = end_time - start_time
-        #print("sample_DQN:", elapsed_time)
-        #start_time =
-      
-        ####################
-        # DQN Loss (lossD)
-        ####################
-        
-        y_pred = self.model(torch.from_numpy(X))
-        y_trgt = torch.from_numpy(y)
-        lossD  = torch.nn.functional.mse_loss( y_pred, y_trgt )
-        
-        #####################
-        # Total Loss function
-        #####################
-       # Lambda = self.pinnOp['WEIGHT_PDE']
-        #Mu     = self.pinnOp['WEIGHT_BOUNDARY']
-    
-        #loss = lossD + Lambda*lossP + Mu*lossB      
-        loss = lossD
-        
-        #end_time = datetime.datetime.now()
-        #elapsed_time = end_time - start_time
-        #print("loss:", elapsed_time)
-        #start_time = datetime.datetime.now()
+        # Update critic network
+        self.critic_optimizer.zero_grad()
+        loss_critic.backward()
+        self.critic_optimizer.step()
 
         ############################
-        # Update trainable variables
+        # Update actor network 
         ############################
-        loss.backward()
-        self.optimizer.step()
-        self.optimizer.zero_grad()
+        states = torch.tensor(np.array([transition[0] for transition in minibatch], dtype=np.float32))
+        actions_pred = self.actor(states)
+        critic_input = torch.cat([states, actions_pred], dim=1)
         
-        #end_time = datetime.datetime.now()
-        #elapsed_time = end_time - start_time
-        #print("grad:", elapsed_time)
+        loss_actor = -self.critic(critic_input).mean()
+        
+        
+        self.actor_optimizer.zero_grad()
+        loss_actor.backward()
+        self.actor_optimizer.step()
+        
+        ############################
+        # Update target network (もっと早くなるかも)
+        ############################
+        for target_param, param in zip(self.target_critic.parameters(), self.critic.parameters()):
+              target_param.data.copy_(self.agentOp['TAU'] * param.data + (1 - self.agentOp['TAU']) * target_param.data)
 
-        if is_episode_done:
-            #############################
-            # Update target Q-function and decay epsilon            
-            self.target_update_counter += 1
-
-            if self.target_update_counter > self.agentOp['UPDATE_TARGET_EVERY']:
-                self.target_model.load_state_dict(self.model.state_dict())
-                self.target_update_counter = 0
-
-            ##############################
-            # Decay epsilon
-            if self.epsilon > self.agentOp['EPSILON_MIN']:
-                self.epsilon *= self.agentOp['EPSILON_DECAY']
-                self.epsilon = max( self.agentOp['EPSILON_MIN'], self.epsilon)
-
+        for target_param, param in zip(self.target_actor.parameters(), self.actor.parameters()):
+              target_param.data.copy_(self.agentOp['TAU'] * param.data + (1 - self.agentOp['TAU']) * target_param.data)
+         
+            
     def load_weights(self, ckpt_dir, ckpt_idx=None):
 
         if not os.path.isdir(ckpt_dir):         
@@ -257,8 +222,8 @@ class PIRLagent:
                 raise FileNotFoundError("Check point 'agent-{}' does not exist.".format(ckpt_idx))
 
         checkpoint = torch.load(ckpt_path)
-        self.model.load_state_dict(checkpoint['weights'])
-        self.target_model.load_state_dict(checkpoint['target-weights'])        
+        self.critic.load_state_dict(checkpoint['weights'])
+        self.target_critic.load_state_dict(checkpoint['target-weights'])        
         self.replay_memory = checkpoint['replay_memory']
         
         print(f'Agent loaded weights stored in {ckpt_path}')
@@ -297,7 +262,8 @@ def each_episode(agent, env, trainOp):
     episode_reward = 0
     current_state = env.reset()
 
-    episode_q0 = agent.get_qs(current_state).max()
+    # .episode_q0 = agent.get_qs(current_state).max()
+    episode_q0 = 0
 
     ###############################
     # Iterate until episode ends
@@ -306,7 +272,8 @@ def each_episode(agent, env, trainOp):
 
         # get action
         action_idx = agent.get_epsilon_greedy_action(current_state)
-        
+        # action_idx = agent.get_action(current_state)
+        #action_w_noise = agent.get_action_with_noise(current_state)
         # make a step
         new_state, reward, is_done = env.step(action_idx)
         episode_reward += reward
@@ -348,8 +315,8 @@ def train(agent, env, trainOp):
             if trainOp['SAVE_AGENTS'] and episode % trainOp['SAVE_FREQ'] == 0:
                 
                 ckpt_path = trainOp['LOG_DIR'] + f'/agent-{episode}'
-                torch.save({'weights':        agent.model.state_dict(),
-                            'target-weights': agent.target_model.state_dict(),
+                torch.save({'weights':        agent.critic.state_dict(),
+                            'target-weights': agent.target_actor.state_dict(),
                             'replay_memory':  agent.replay_memory}, 
                            ckpt_path)
                 
