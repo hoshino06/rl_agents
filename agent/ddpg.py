@@ -1,4 +1,4 @@
-""" DQN based PIRL implementation with pytorch
+""" DDPG based PIRL implementation with pytorch
         1. agentOptions
         2. pinnOptions
         3. PIRLagent
@@ -21,7 +21,8 @@ from   torch.utils.tensorboard import SummaryWriter
 # Agent Options
 def agentOptions(
         DISCOUNT            = 0.99, 
-        OPTIMIZER           = None,
+        CRITIC_OPTIMIZER    = None,
+        ACTOR_OPTIMIZER     = None,
         REPLAY_MEMORY_SIZE  = 5_000,
         REPLAY_MEMORY_MIN   = 100,
         MINIBATCH_SIZE      = 16, 
@@ -35,8 +36,8 @@ def agentOptions(
     
     agentOp = {
         'DISCOUNT'          : DISCOUNT,
-        'ACTOR_OPTIMIZER'   : OPTIMIZER,
-        'CRITIC_OPTIMIZER'  : OPTIMIZER,
+        'ACTOR_OPTIMIZER'   : ACTOR_OPTIMIZER,
+        'CRITIC_OPTIMIZER'  : CRITIC_OPTIMIZER,
         'REPLAY_MEMORY_SIZE': REPLAY_MEMORY_SIZE,
         'REPLAY_MEMORY_MIN' : REPLAY_MEMORY_MIN,
         'MINIBATCH_SIZE'    : MINIBATCH_SIZE, 
@@ -101,15 +102,6 @@ class DDPGagent:
     def update_replay_memory(self, transition):
         self.replay_memory.append(transition)
 
-    def get_epsilon_greedy_action(self, state):
-        if np.random.random() > self.agentOp['EPSILON_INIT']:
-            # Greedy action from Q network
-            action_idx = int( torch.argmax(self.get_qs(state)) )
-        else:
-            # Random action
-            action_idx = np.random.randint(0, self.actNum)  
-        return action_idx
-
     def get_action(self, state):
         state = torch.tensor(state, dtype=torch.float32)
         return self.actor(state)
@@ -123,12 +115,16 @@ class DDPGagent:
         Standarddeviation = 0.1;
         w = Mean + np.random.randn(ActionSize)*Standarddeviation
         
-        action_w_noise = action.detach().numpy() + w
-        return action_w_noise
+        action_float = action.detach().numpy() + w
+        action_idx = int(action_float)
+        return action_idx
    
     def get_qs(self, state):
-        state = torch.tensor(state, dtype=torch.float32)        
-        return self.critic(state)
+        state = torch.tensor(state, dtype=torch.float32).unsqueeze(0)
+        action_values = self.actor(state)
+        combined_input = torch.cat([state, action_values],dim=1)
+        return self.critic(combined_input)
+    
 
     def train_step(self, experience, is_episode_done):
         ########################
@@ -262,8 +258,7 @@ def each_episode(agent, env, trainOp):
     episode_reward = 0
     current_state = env.reset()
 
-    # .episode_q0 = agent.get_qs(current_state).max()
-    episode_q0 = 0
+    episode_q0 = agent.get_qs(current_state).max().item() 
 
     ###############################
     # Iterate until episode ends
@@ -271,9 +266,8 @@ def each_episode(agent, env, trainOp):
     while not is_done:
 
         # get action
-        action_idx = agent.get_epsilon_greedy_action(current_state)
-        # action_idx = agent.get_action(current_state)
-        #action_w_noise = agent.get_action_with_noise(current_state)
+        action_idx = agent.get_action_with_noise(current_state)
+       
         # make a step
         new_state, reward, is_done = env.step(action_idx)
         episode_reward += reward
@@ -310,6 +304,7 @@ def train(agent, env, trainOp):
         if trainOp['LOG_DIR']: 
             summary_writer.add_scalar("Episode Reward", ep_reward, episode)
             summary_writer.add_scalar("Episode Q0",     ep_q0,     episode)
+
             summary_writer.flush()
 
             if trainOp['SAVE_AGENTS'] and episode % trainOp['SAVE_FREQ'] == 0:
