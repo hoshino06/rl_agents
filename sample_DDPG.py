@@ -65,11 +65,11 @@ def main_training():
 
     agentOp = agentOptions(
         DISCOUNT=1,
-        CRITIC_OPTIMIZER = Adam(critic.parameters(), lr=1e-5),
-        ACTOR_OPTIMIZER = Adam(actor.parameters(), lr=1e-5),
+        CRITIC_OPTIMIZER = Adam(critic.parameters(), lr=1e-3),
+        ACTOR_OPTIMIZER = Adam(actor.parameters(), lr=1e-4),
         REPLAY_MEMORY_SIZE=5000,
         REPLAY_MEMORY_MIN=100,
-        MINIBATCH_SIZE= 8,
+        MINIBATCH_SIZE= 16,
 )
     
  #    pinnOp = pinnOptions(
@@ -89,7 +89,7 @@ def main_training():
         SHOW_PROGRESS=True,
         LOG_DIR=LOG_DIR,
         SAVE_AGENTS=True,
-        SAVE_FREQ=500,
+        SAVE_FREQ=3000,
     )
     train(agent, env, trainOp)
 
