@@ -104,21 +104,27 @@ class DDPGagent:
 
     def get_action(self, state):
         state = torch.tensor(state, dtype=torch.float32)
-        return self.actor(state)
+        return self.actor(state).detach().numpy()
     
     def get_action_with_noise(self, state):
-        
         action = self.get_action(state)
-        
         Mean = 0
         ActionSize = 1
         Standarddeviation = 0.1;
-        w = Mean + np.random.randn(ActionSize)*Standarddeviation
+        noise = Mean + np.random.randn(ActionSize)*Standarddeviation# ここでノイズを追加
+        action_with_noise = action + noise
+        return action_with_noise
+        # action = self.get_action(state)
         
-        action_float = action.detach().numpy() + w
-        action_idx = int(action_float)
-        return action_idx
-   
+      
+        
+        # action_float = action.detach().numpy() + w
+        # action_idx = int(action_float)
+        
+        # if action_idx < 0 or action_idx >= self.actNum:
+        #    action_idx = max(0, min(action_idx, self.actNum - 1))
+        # return action_idx
+    
     def get_qs(self, state):
         state = torch.tensor(state, dtype=torch.float32).unsqueeze(0)
         action_values = self.actor(state)
@@ -266,14 +272,14 @@ def each_episode(agent, env, trainOp):
     while not is_done:
 
         # get action
-        action_idx = agent.get_action_with_noise(current_state)
+        action = agent.get_action_with_noise(current_state)
        
         # make a step
-        new_state, reward, is_done = env.step(action_idx)
+        new_state, reward, is_done = env.step(action[0])
         episode_reward += reward
 
         # train Q network
-        experience = (current_state, action_idx, reward, new_state, is_done)
+        experience = (current_state, action, reward, new_state, is_done)
         agent.train_step( experience, is_done )
 
         # update current state
